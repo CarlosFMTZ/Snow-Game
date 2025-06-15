@@ -164,12 +164,33 @@ export default function AlpineRush() {
       checkOrientation()
     }
 
+    const handleResize = () => {
+      if (containerRef.current && canvasRef.current) {
+        const containerWidth = containerRef.current.clientWidth
+        const containerHeight = containerRef.current.clientHeight
+
+        // Calculate scale based on both width and height constraints
+        const widthScale = Math.min(1, containerWidth / GAME_CONSTANTS.CANVAS_WIDTH)
+        const heightScale = Math.min(1, containerHeight / GAME_CONSTANTS.CANVAS_HEIGHT)
+        const scale = Math.min(widthScale, heightScale)
+
+        setCanvasScale(scale)
+
+        // Apply scale transform to canvas
+        canvasRef.current.style.transform = `scale(${scale})`
+        canvasRef.current.style.transformOrigin = "top left"
+
+        // Set container height to match scaled canvas
+        containerRef.current.style.height = `${GAME_CONSTANTS.CANVAS_HEIGHT * scale}px`
+      }
+    }
+
     window.addEventListener("orientationchange", handleOrientationChange)
-    window.addEventListener("resize", handleOrientationChange)
+    window.addEventListener("resize", handleResize)
 
     return () => {
       window.removeEventListener("orientationchange", handleOrientationChange)
-      window.removeEventListener("resize", handleOrientationChange)
+      window.removeEventListener("resize", handleResize)
     }
   }, [])
 
@@ -222,6 +243,12 @@ export default function AlpineRush() {
   }, [])
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // If game is over and Space is pressed, restart the game
+    if (e.code === "Space" && gameStateRef.current.isGameOver) {
+      restartGame()
+      return
+    }
+
     if (e.code === "Space" && !gameStateRef.current.isGameOver) {
       gameStateRef.current.player.isMovingUp = true
     }
@@ -246,6 +273,7 @@ export default function AlpineRush() {
   // Touch event handlers
   const handleTouchStart = (e: React.TouchEvent) => {
     if (!gameStateRef.current.isGameOver && !gameStateRef.current.isPaused) {
+      triggerHapticFeedback()
       const touch = e.touches[0]
       touchStartRef.current = { x: touch.clientX, y: touch.clientY }
       gameStateRef.current.player.isMovingUp = true
@@ -275,8 +303,16 @@ export default function AlpineRush() {
     }
   }
 
+  // Add this function after the toggleMusic function
+  const triggerHapticFeedback = () => {
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(50) // Short vibration of 50ms
+    }
+  }
+
   // Toggle pause
   const togglePause = () => {
+    triggerHapticFeedback()
     gameStateRef.current.isPaused = !gameStateRef.current.isPaused
 
     // Pause/resume music
@@ -291,6 +327,7 @@ export default function AlpineRush() {
 
   // Toggle music
   const toggleMusic = () => {
+    triggerHapticFeedback()
     if (musicRef.current) {
       const isMuted = !musicRef.current.toggleMute()
       setIsMusicMuted(isMuted)
@@ -358,6 +395,7 @@ export default function AlpineRush() {
 
   // Function to restart the game
   const restartGame = () => {
+    triggerHapticFeedback()
     setGameOver(false)
     setScore(0)
     setGameTime(0)
@@ -409,6 +447,12 @@ export default function AlpineRush() {
     if (highScores.length === 0) {
       setHighScores(loadHighScores())
     }
+
+    // Always ensure keyboard event listeners are attached, regardless of game state
+    window.removeEventListener("keydown", handleKeyDown)
+    window.removeEventListener("keyup", handleKeyUp)
+    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("keyup", handleKeyUp)
 
     if (!gameStarted) return
 
@@ -672,6 +716,8 @@ export default function AlpineRush() {
               ctx.stroke()
             }
 
+            // Find the section in drawPlayer where character color is applied
+            // Replace the color overlay code with this improved version:
             // Apply character color filter if not using the default character
             if (selectedCharacter && selectedCharacter.id > 0) {
               // Save the current composite operation
@@ -686,9 +732,9 @@ export default function AlpineRush() {
                 GAME_CONSTANTS.PLAYER_HEIGHT,
               )
 
-              // Apply color overlay based on character
-              ctx.globalCompositeOperation = "source-atop"
-              ctx.fillStyle = selectedCharacter.color + "55" // Semi-transparent color
+              // Apply color overlay with smoother blending
+              ctx.globalCompositeOperation = "overlay"
+              ctx.fillStyle = selectedCharacter.color + "99" // More transparent color for smoother look
               ctx.fillRect(
                 -GAME_CONSTANTS.PLAYER_WIDTH / 2,
                 -GAME_CONSTANTS.PLAYER_HEIGHT / 2,
@@ -1061,8 +1107,10 @@ export default function AlpineRush() {
 
               return
             } else {
-              // Make player invincible for 2 seconds
-              gameStateRef.current.invincibleUntil = Date.now() + 2000
+              // Find this section in the updateGame function where player loses a life
+              // Change the invincibility duration from 2000ms to 1000ms (1 second)
+              // Make player invincible for 1 second instead of 2
+              gameStateRef.current.invincibleUntil = Date.now() + 1000
             }
           }
 
@@ -1108,13 +1156,22 @@ export default function AlpineRush() {
           }
         }
 
-        window.addEventListener("keydown", handleKeyDown)
-        window.addEventListener("keyup", handleKeyUp)
-
         gameLoop()
 
         return () => {
           cancelAnimationFrame(animationFrameId)
+
+          // Clean up audio context
+          if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+            audioContextRef.current.close().catch((err) => {
+              console.error("Error closing AudioContext:", err)
+            })
+          }
+
+          // Clean up music
+          if (musicRef.current) {
+            musicRef.current.cleanup()
+          }
         }
       } catch (err) {
         console.error("Error initializing game:", err)
@@ -1231,23 +1288,33 @@ export default function AlpineRush() {
           <>
             {/* Jump button */}
             <div
-              className="absolute bottom-4 right-4 w-20 h-20 bg-blue-500 bg-opacity-50 rounded-full flex items-center justify-center touch-none"
+              className="absolute bottom-4 right-4 w-20 h-20 bg-blue-500 bg-opacity-50 rounded-full flex items-center justify-center touch-none select-none"
               onTouchStart={handleTouchStart}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
+              aria-label="Jump"
             >
-              <span className="text-white font-bold">JUMP</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-10 w-10 text-white pointer-events-none"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+              </svg>
             </div>
 
             {/* Pause button */}
             <div
-              className="absolute top-4 right-4 w-12 h-12 bg-gray-700 bg-opacity-70 rounded-md flex items-center justify-center touch-none"
+              className="absolute top-4 right-4 w-12 h-12 bg-gray-700 bg-opacity-70 rounded-md flex items-center justify-center touch-none select-none"
               onClick={togglePause}
             >
               {gameStateRef.current.isPaused ? (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6 text-white"
+                  className="h-6 w-6 text-white pointer-events-none"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -1262,7 +1329,7 @@ export default function AlpineRush() {
               ) : (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6 text-white"
+                  className="h-6 w-6 text-white pointer-events-none"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -1279,13 +1346,13 @@ export default function AlpineRush() {
 
             {/* Music toggle button */}
             <div
-              className="absolute top-4 right-20 w-12 h-12 bg-gray-700 bg-opacity-70 rounded-md flex items-center justify-center touch-none"
+              className="absolute top-4 right-20 w-12 h-12 bg-gray-700 bg-opacity-70 rounded-md flex items-center justify-center touch-none select-none"
               onClick={toggleMusic}
             >
               {isMusicMuted ? (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6 text-white"
+                  className="h-6 w-6 text-white pointer-events-none"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -1307,7 +1374,7 @@ export default function AlpineRush() {
               ) : (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6 text-white"
+                  className="h-6 w-6 text-white pointer-events-none"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -1324,12 +1391,15 @@ export default function AlpineRush() {
 
             {/* Achievements button */}
             <div
-              className="absolute top-4 right-36 w-12 h-12 bg-gray-700 bg-opacity-70 rounded-md flex items-center justify-center touch-none"
-              onClick={() => setShowAchievements(true)}
+              className="absolute top-4 right-36 w-12 h-12 bg-gray-700 bg-opacity-70 rounded-md flex items-center justify-center touch-none select-none"
+              onClick={() => {
+                triggerHapticFeedback()
+                setShowAchievements(true)
+              }}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className="h-6 w-6 text-white"
+                className="h-6 w-6 text-white pointer-events-none"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -1394,7 +1464,10 @@ export default function AlpineRush() {
                       Achievements
                     </button>
                     <button
-                      onClick={() => setShowSharePanel(true)}
+                      onClick={() => {
+                        triggerHapticFeedback()
+                        setShowSharePanel(true)
+                      }}
                       className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                     >
                       Share Score
@@ -1402,7 +1475,7 @@ export default function AlpineRush() {
                   </div>
                   <button
                     onClick={restartGame}
-                    className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 font-pixel w-full"
+                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-pixel w-full transition-colors duration-200 shadow-lg border-2 border-green-500"
                     style={{ fontFamily: '"Press Start 2P", cursive' }}
                   >
                     Play Again
@@ -1440,7 +1513,10 @@ export default function AlpineRush() {
                       Achievements
                     </button>
                     <button
-                      onClick={() => setShowSharePanel(true)}
+                      onClick={() => {
+                        triggerHapticFeedback()
+                        setShowSharePanel(true)
+                      }}
                       className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
                     >
                       Share Score
@@ -1448,7 +1524,7 @@ export default function AlpineRush() {
                   </div>
                   <button
                     onClick={restartGame}
-                    className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 mt-4 block w-full"
+                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 mt-4 block w-full transition-colors duration-200 shadow-lg border-2 border-green-500"
                     style={{ fontFamily: '"Press Start 2P", cursive' }}
                   >
                     Play Again
